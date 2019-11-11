@@ -30,6 +30,8 @@ parser.add_argument('--graph_embedding', type=bool, default=False, help='graph_e
 
 parser.add_argument('--test_other', type=bool, default=False, help='test on different data')
 parser.add_argument('--test_adj', type=str, default='/home/ytae/nas_datasets/traffic/region/1901/adj_mx.pkl', help='test on different data')
+# Incident data experiment
+parser.add_argument('--incident', type=bool, default=False, help='Train with incident features')
 
 args = parser.parse_args()
 
@@ -60,20 +62,18 @@ def main():
     if args.aptonly:
         supports = None
 
-    dataloader = util.load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size, args.graph_embedding)
+    dataloader = util.load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size, args.graph_embedding, args.incident)
 
     # pdb.set_trace()
 
     args.graph_embedding = False
+    graph_emb = None
 
     if args.graph_embedding:
         graph_emb = dataloader['embedding']
         graph_emb = torch.Tensor(graph_emb.astype('float64')).to(device)
 
-    if args.graph_embedding:
-        model =  gwnet(device, args.num_nodes, args.dropout, supports=supports, gcn_bool=args.gcn_bool, addaptadj=args.addaptadj, aptinit=adjinit, in_dim=args.in_dim, out_dim=args.seq_length, residual_channels=args.nhid, dilation_channels=args.nhid, skip_channels=args.nhid * 8, end_channels=args.nhid * 16, graph_emb=graph_emb)
-    else:
-        model =  gwnet(device, args.num_nodes, args.dropout, supports=supports, gcn_bool=args.gcn_bool, addaptadj=args.addaptadj, aptinit=adjinit, in_dim=args.in_dim, out_dim=args.seq_length, residual_channels=args.nhid, dilation_channels=args.nhid, skip_channels=args.nhid * 8, end_channels=args.nhid * 16, graph_emb=None)
+    model = gwnet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16, incident=incident, graph_emb_update=graph_emb_update, graph_emb=graph_emb)
 
     model.to(device)
     model.load_state_dict(torch.load(args.checkpoint))
@@ -86,12 +86,22 @@ def main():
     realy = torch.Tensor(dataloader['y_test']).to(device)
     realy = realy.transpose(1,3)[:,0,:,:]
 
-    for iter, (x, y) in enumerate(dataloader['test_loader'].get_iterator()):
-        testx = torch.Tensor(x).to(device)
-        testx = testx.transpose(1,3)
-        with torch.no_grad():
-            preds = model(testx).transpose(1,3)
-        outputs.append(preds.squeeze())
+    if args.incident == True:
+        for iter, (x, y, incident_x) in enumerate(dataloader['test_loader'].get_iterator()):
+            testx = torch.Tensor(x).to(device)
+            testx = testx.transpose(1,3)
+            incidentx = torch.Tensor(incident_x).to(device)
+            incidentx = incidentx.transpose(1,3)
+            with torch.no_grad():
+                preds = model(testx, incidentx).transpose(1,3)
+            outputs.append(preds.squeeze())
+    else:
+        for iter, (x, y) in enumerate(dataloader['test_loader'].get_iterator()):
+            testx = torch.Tensor(x).to(device)
+            testx = testx.transpose(1,3)
+            with torch.no_grad():
+                preds = model(testx,None).transpose(1,3)
+            outputs.append(preds.squeeze())
 
     yhat = torch.cat(outputs,dim=0)
     yhat = yhat[:realy.size(0),...]
