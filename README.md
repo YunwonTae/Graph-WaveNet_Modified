@@ -3,6 +3,10 @@
 This is the modified version of original Graph-WaveNet model(https://github.com/nnzhan/Graph-WaveNet). \
 The additional incident and weather features are included on top of the original model.
 
+<p align="center">
+  <img width="350" height="400" src=./figure.png>
+</p>
+
 ## Requirements
 - python 3
 - pytorch
