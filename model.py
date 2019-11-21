@@ -46,7 +46,7 @@ class gcn(nn.Module):
 
 
 class gwnet(nn.Module):
-    def __init__(self, device, num_nodes, dropout=0.3, supports=None, gcn_bool=True, addaptadj=True, aptinit=None, in_dim=2,out_dim=12,residual_channels=32,dilation_channels=32,skip_channels=256,end_channels=512,kernel_size=2,blocks=4,layers=2, incident=False, graph_emb_update=False, graph_emb=None):
+    def __init__(self, device, num_nodes, dropout=0.3, supports=None, gcn_bool=True, addaptadj=True, aptinit=None, in_dim=2,out_dim=12,residual_channels=32,dilation_channels=32,skip_channels=256,end_channels=512,kernel_size=2,blocks=4,layers=2, incident=False, weather=False, graph_emb_update=False, graph_emb=None):
         super(gwnet, self).__init__()
         self.dropout = dropout
         self.blocks = blocks
@@ -56,6 +56,7 @@ class gwnet(nn.Module):
         self.graph_emb = graph_emb
         self.graph_emb_update = graph_emb_update
         self.incident = incident
+        self.weather = weather
 
         self.filter_convs = nn.ModuleList()
         self.gate_convs = nn.ModuleList()
@@ -74,11 +75,29 @@ class gwnet(nn.Module):
                                         out_channels=residual_channels,
                                         kernel_size=(1,1))
 
-        if self.incident == True:
-            self.start_conv2 = nn.Conv2d(in_channels=5,
+
+        if self.incident == True and self.weather == True:
+            self.incident_conv = nn.Conv2d(in_channels=1,
                                         out_channels=residual_channels,
                                         kernel_size=(1,1))
-            self.start_conv3= nn.Conv2d(in_channels=residual_channels*2,
+            self.weather_conv = nn.Conv2d(in_channels=4,
+                                        out_channels=residual_channels,
+                                        kernel_size=(1,1))
+            self.concat_conv = nn.Conv2d(in_channels=residual_channels*3,
+                                        out_channels=residual_channels,
+                                        kernel_size=(1,1))
+        elif self.incident == True:
+            self.incident_conv = nn.Conv2d(in_channels=1,
+                                        out_channels=residual_channels,
+                                        kernel_size=(1,1))
+            self.concat_conv = nn.Conv2d(in_channels=residual_channels*2,
+                                        out_channels=residual_channels,
+                                        kernel_size=(1,1))
+        elif self.weather == True:
+            self.weather_conv = nn.Conv2d(in_channels=4,
+                                        out_channels=residual_channels,
+                                        kernel_size=(1,1))
+            self.concat_conv = nn.Conv2d(in_channels=residual_channels*2,
                                         out_channels=residual_channels,
                                         kernel_size=(1,1))
 
@@ -155,19 +174,19 @@ class gwnet(nn.Module):
 
 
 
-    def forward(self, input, incident_x=None):
-
-        # pdb.set_trace()
-
+    def forward(self, input, incident_x=None, weather_x=None):
         in_len = input.size(3)
         if in_len<self.receptive_field:
             x = nn.functional.pad(input,(self.receptive_field-in_len,0,0,0))
-            if self.incident == True:
-                x2 = nn.functional.pad(incident_x,(self.receptive_field-in_len,0,0,0))
+            if self.incident == True and self.weather == True:
+                incident_x = nn.functional.pad(incident_x,(self.receptive_field-in_len,0,0,0))
+                weather_x = nn.functional.pad(weather_x,(self.receptive_field-in_len,0,0,0))
+            elif self.incident == True:
+                incident_x = nn.functional.pad(incident_x,(self.receptive_field-in_len,0,0,0))
+            elif self.weather == True:
+                weather_x = nn.functional.pad(weather_x,(self.receptive_field-in_len,0,0,0))
         else:
             x = input
-            if self.incident == True:
-                x2 = incident_x
 
         #Projecting graph embedding
         if self.graph_emb is not None:
@@ -179,10 +198,28 @@ class gwnet(nn.Module):
         else:
             x = self.start_conv(x)
 
-        if self.incident == True:
-            x2 = self.start_conv2(x2)
-            x = torch.cat([x,x2], axis=1)
-            x = self.start_conv3(x)
+
+        if self.incident == True and self.weather == True:
+            incident_x = self.incident_conv(incident_x)
+            incident_x = F.relu(incident_x)
+            weather_x = self.weather_conv(weather_x)
+            weather_x = F.relu(weather_x)
+            x = torch.cat([x,incident_x], dim=1)
+            x = torch.cat([x,weather_x], dim=1)
+            x = self.concat_conv(x)
+            x = torch.tanh(x)
+        elif self.incident == True:
+            incident_x = self.incident_conv(incident_x)
+            incident_x = F.relu(incident_x)
+            x = torch.cat([x,incident_x], dim=1)
+            x = self.concat_conv(x)
+            x = torch.tanh(x)
+        elif self.weather == True:
+            weather_x = self.weather_conv(weather_x)
+            weather_x = F.relu(weather_x)
+            x = torch.cat([x,weather_x], dim=1)
+            x = self.concat_conv(x)
+            x = torch.tanh(x)
 
         skip = 0
 
