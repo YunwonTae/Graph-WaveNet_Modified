@@ -9,8 +9,8 @@ from engine import trainer
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--device',type=str,default='cuda:0',help='')
-parser.add_argument('--data',type=str,default='/home/ytae/nas_datasets/traffic/incident/experiment',help='data path')
-parser.add_argument('--adjdata',type=str,default='/home/ytae/nas_datasets/traffic/incident/experiment/adj_mx.pkl',help='adj data path')
+parser.add_argument('--data',type=str,default='/home/nas_datasets/traffic/incident/data',help='data path')
+parser.add_argument('--adjdata',type=str,default='/home/nas_datasets/traffic/incident/data/adj_mx.pkl',help='adj data path')
 parser.add_argument('--adjtype',type=str,default='doubletransition',help='adj type')
 parser.add_argument('--gcn_bool',action='store_true',help='whether to add graph convolution layer')
 parser.add_argument('--aptonly',action='store_true',help='whether only adaptive adj')
@@ -19,15 +19,15 @@ parser.add_argument('--randomadj',action='store_true',help='whether random initi
 parser.add_argument('--seq_length',type=int,default=12,help='')
 parser.add_argument('--nhid',type=int,default=32,help='')
 parser.add_argument('--in_dim',type=int,default=2,help='inputs dimension')
-parser.add_argument('--num_nodes',type=int,default=980,help='number of nodes')
+parser.add_argument('--num_nodes',type=int,default=977,help='number of nodes')
 parser.add_argument('--batch_size',type=int,default=64,help='batch size')
 parser.add_argument('--learning_rate',type=float,default=0.001,help='learning rate')
 parser.add_argument('--dropout',type=float,default=0.3,help='dropout rate')
 parser.add_argument('--weight_decay',type=float,default=0.0001,help='weight decay rate')
-parser.add_argument('--epochs',type=int,default=1,help='')
+parser.add_argument('--epochs',type=int,default=100,help='')
 parser.add_argument('--print_every',type=int,default=50,help='')
 #parser.add_argument('--seed',type=int,default=99,help='random seed')
-parser.add_argument('--save',type=str,default='/home/ytae/nas_datasets/traffic/incident/experiment/incident',help='save path')
+parser.add_argument('--save',type=str,default='/home/nas_datasets/traffic/incident/experiment/incident_weather_all',help='save path')
 parser.add_argument('--expid',type=int,default=5,help='experiment id')
 
 # Graph embedding experiment
@@ -36,7 +36,9 @@ parser.add_argument('--graph_emb_update', type=bool, default=False, help='update
 # Transfer learning experiment
 parser.add_argument('--load_model', type=bool, default=False, help='load model')
 # Incident data experiment
-parser.add_argument('--incident', type=bool, default=False, help='Train with incident features')
+parser.add_argument('--incident', type=bool, default=True, help='Train with incident features')
+# Weather data experiment
+parser.add_argument('--weather', type=bool, default=True, help='Train with weather features')
 
 args = parser.parse_args()
 
@@ -47,7 +49,7 @@ def main():
     #load data
     device = torch.device(args.device)
     sensor_ids, sensor_id_to_ind, adj_mx = util.load_adj(args.adjdata,args.adjtype)
-    dataloader = util.load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size, args.graph_embedding, args.incident)
+    dataloader = util.load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size, args.graph_embedding, args.incident, args.weather)
     scaler = dataloader['scaler']
     graph_emb = None
     if args.graph_embedding:
@@ -68,11 +70,11 @@ def main():
 
     engine = trainer(scaler, args.in_dim, args.seq_length, args.num_nodes, args.nhid, args.dropout,
                          args.learning_rate, args.weight_decay, device, supports, args.gcn_bool, args.addaptadj,
-                         adjinit, args.incident, args.graph_emb_update, graph_emb)
+                         adjinit, args.incident, args.weather, args.graph_emb_update, graph_emb)
 
     if args.load_model:
         print("load model weights...")
-        engine.model.load_state_dict(torch.load("/home/ytae/nas_datasets/traffic/region/1707_1807/experiment/341/341_exp5_best_8.02.pth"))
+        engine.model.load_state_dict(torch.load("/home/nas_datasets/traffic/region/1707_1807/experiment/341/341_exp5_best_8.02.pth"))
 
     print("start training...",flush=True)
     his_loss =[]
@@ -88,7 +90,26 @@ def main():
         train_rmse = []
         t1 = time.time()
         dataloader['train_loader'].shuffle()
-        if args.incident == True:
+
+        if args.incident == True and args.weather == True:
+            for iter, (x, y, incident_x, weather_x) in enumerate(dataloader['train_loader'].get_iterator()):
+                trainx = torch.Tensor(x).to(device)
+                trainx= trainx.transpose(1, 3)
+                trainy = torch.Tensor(y).to(device)
+                trainy = trainy.transpose(1, 3)
+                incidentx = torch.Tensor(incident_x).to(device)
+                incidentx= incidentx.transpose(1, 3)
+                weather_x = torch.Tensor(weather_x).to(device)
+                weather_x= weather_x.transpose(1, 3)
+                metrics = engine.train(trainx, trainy[:,0,:,:], incidentx, weather_x)
+                train_loss.append(metrics[0])
+                train_mape.append(metrics[1])
+                train_rmse.append(metrics[2])
+                if iter % args.print_every == 0 :
+                    log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
+                    print(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]),flush=True)
+
+        elif args.incident == True:
             for iter, (x, y, incident_x) in enumerate(dataloader['train_loader'].get_iterator()):
                 trainx = torch.Tensor(x).to(device)
                 trainx= trainx.transpose(1, 3)
@@ -96,20 +117,37 @@ def main():
                 trainy = trainy.transpose(1, 3)
                 incidentx = torch.Tensor(incident_x).to(device)
                 incidentx= incidentx.transpose(1, 3)
-                metrics = engine.train(trainx, trainy[:,0,:,:], incidentx)
+                metrics = engine.train(trainx, trainy[:,0,:,:], incidentx, None)
                 train_loss.append(metrics[0])
                 train_mape.append(metrics[1])
                 train_rmse.append(metrics[2])
                 if iter % args.print_every == 0 :
                     log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
                     print(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]),flush=True)
+
+        elif args.weather == True:
+            for iter, (x, y, weather_x) in enumerate(dataloader['train_loader'].get_iterator()):
+                trainx = torch.Tensor(x).to(device)
+                trainx= trainx.transpose(1, 3)
+                trainy = torch.Tensor(y).to(device)
+                trainy = trainy.transpose(1, 3)
+                weather_x = torch.Tensor(weather_x).to(device)
+                weather_x= weather_x.transpose(1, 3)
+                metrics = engine.train(trainx, trainy[:,0,:,:], None, weather_x)
+                train_loss.append(metrics[0])
+                train_mape.append(metrics[1])
+                train_rmse.append(metrics[2])
+                if iter % args.print_every == 0 :
+                    log = 'Iter: {:03d}, Train Loss: {:.4f}, Train MAPE: {:.4f}, Train RMSE: {:.4f}'
+                    print(log.format(iter, train_loss[-1], train_mape[-1], train_rmse[-1]),flush=True)
+
         else:
             for iter, (x, y) in enumerate(dataloader['train_loader'].get_iterator()):
                 trainx = torch.Tensor(x).to(device)
                 trainx= trainx.transpose(1, 3)
                 trainy = torch.Tensor(y).to(device)
                 trainy = trainy.transpose(1, 3)
-                metrics = engine.train(trainx, trainy[:,0,:,:], None)
+                metrics = engine.train(trainx, trainy[:,0,:,:], None, None)
                 train_loss.append(metrics[0])
                 train_mape.append(metrics[1])
                 train_rmse.append(metrics[2])
@@ -125,7 +163,21 @@ def main():
 
 
         s1 = time.time()
-        if args.incident == True:
+        if args.incident == True and args.weather == True:
+            for iter, (x, y, incident_x, weather_x) in enumerate(dataloader['val_loader'].get_iterator()):
+                testx = torch.Tensor(x).to(device)
+                testx = testx.transpose(1, 3)
+                testy = torch.Tensor(y).to(device)
+                testy = testy.transpose(1, 3)
+                incidentx = torch.Tensor(incident_x).to(device)
+                incidentx = incidentx.transpose(1, 3)
+                weather_x = torch.Tensor(weather_x).to(device)
+                weather_x= weather_x.transpose(1, 3)
+                metrics = engine.eval(testx, testy[:,0,:,:], incidentx, weather_x)
+                valid_loss.append(metrics[0])
+                valid_mape.append(metrics[1])
+                valid_rmse.append(metrics[2])
+        elif args.incident == True:
             for iter, (x, y, incident_x) in enumerate(dataloader['val_loader'].get_iterator()):
                 testx = torch.Tensor(x).to(device)
                 testx = testx.transpose(1, 3)
@@ -133,7 +185,19 @@ def main():
                 testy = testy.transpose(1, 3)
                 incidentx = torch.Tensor(incident_x).to(device)
                 incidentx = incidentx.transpose(1, 3)
-                metrics = engine.eval(testx, testy[:,0,:,:], incidentx)
+                metrics = engine.eval(testx, testy[:,0,:,:], incidentx, None)
+                valid_loss.append(metrics[0])
+                valid_mape.append(metrics[1])
+                valid_rmse.append(metrics[2])
+        elif args.weather == True:
+            for iter, (x, y, weather_x) in enumerate(dataloader['val_loader'].get_iterator()):
+                testx = torch.Tensor(x).to(device)
+                testx = testx.transpose(1, 3)
+                testy = torch.Tensor(y).to(device)
+                testy = testy.transpose(1, 3)
+                weather_x = torch.Tensor(weather_x).to(device)
+                weather_x = weather_x.transpose(1, 3)
+                metrics = engine.eval(testx, testy[:,0,:,:], None, weather_x)
                 valid_loss.append(metrics[0])
                 valid_mape.append(metrics[1])
                 valid_rmse.append(metrics[2])
@@ -143,7 +207,7 @@ def main():
                 testx = testx.transpose(1, 3)
                 testy = torch.Tensor(y).to(device)
                 testy = testy.transpose(1, 3)
-                metrics = engine.eval(testx, testy[:,0,:,:], None)
+                metrics = engine.eval(testx, testy[:,0,:,:], None, None)
                 valid_loss.append(metrics[0])
                 valid_mape.append(metrics[1])
                 valid_rmse.append(metrics[2])
@@ -175,21 +239,43 @@ def main():
     realy = torch.Tensor(dataloader['y_test']).to(device)
     realy = realy.transpose(1,3)[:,0,:,:]
 
-    if args.incident == True:
+    if args.incident == True and args.weather == True:
+        for iter, (x, y, incident_x, weather_x) in enumerate(dataloader['test_loader'].get_iterator()):
+            testx = torch.Tensor(x).to(device)
+            testx = testx.transpose(1,3)
+            incidentx = torch.Tensor(incident_x).to(device)
+            incidentx = incidentx.transpose(1,3)
+            weather_x = torch.Tensor(weather_x).to(device)
+            weather_x = weather_x.transpose(1,3)
+            with torch.no_grad():
+                preds = engine.model(testx, incidentx, weather_x).transpose(1,3)
+            outputs.append(preds.squeeze())
+
+    elif args.incident == True:
         for iter, (x, y, incident_x) in enumerate(dataloader['test_loader'].get_iterator()):
             testx = torch.Tensor(x).to(device)
             testx = testx.transpose(1,3)
             incidentx = torch.Tensor(incident_x).to(device)
             incidentx = incidentx.transpose(1,3)
             with torch.no_grad():
-                preds = engine.model(testx, incidentx).transpose(1,3)
+                preds = engine.model(testx, incidentx, None).transpose(1,3)
+            outputs.append(preds.squeeze())
+
+    elif args.weather == True:
+        for iter, (x, y, incident_x) in enumerate(dataloader['test_loader'].get_iterator()):
+            testx = torch.Tensor(x).to(device)
+            testx = testx.transpose(1,3)
+            incidentx = torch.Tensor(incident_x).to(device)
+            incidentx = incidentx.transpose(1,3)
+            with torch.no_grad():
+                preds = engine.model(testx, None, weather_x).transpose(1,3)
             outputs.append(preds.squeeze())
     else:
         for iter, (x, y) in enumerate(dataloader['test_loader'].get_iterator()):
             testx = torch.Tensor(x).to(device)
             testx = testx.transpose(1,3)
             with torch.no_grad():
-                preds = engine.model(testx, None).transpose(1,3)
+                preds = engine.model(testx, None, None).transpose(1,3)
             outputs.append(preds.squeeze())
 
     yhat = torch.cat(outputs,dim=0)
