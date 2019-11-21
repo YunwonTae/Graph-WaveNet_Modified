@@ -3,23 +3,32 @@ from model import *
 import util
 import pdb
 class trainer():
-    def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit, incident=False, graph_emb_update=False, graph_emb=None):
-        self.model = gwnet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16, incident=incident, graph_emb_update=graph_emb_update, graph_emb=graph_emb)
+    def __init__(self, scaler, in_dim, seq_length, num_nodes, nhid , dropout, lrate, wdecay, device, supports, gcn_bool, addaptadj, aptinit, incident=False, weather=False, graph_emb_update=False, graph_emb=None):
+        self.model = gwnet(device, num_nodes, dropout, supports=supports, gcn_bool=gcn_bool, addaptadj=addaptadj, aptinit=aptinit, in_dim=in_dim, out_dim=seq_length, residual_channels=nhid, dilation_channels=nhid, skip_channels=nhid * 8, end_channels=nhid * 16, incident=incident, weather=weather, graph_emb_update=graph_emb_update, graph_emb=graph_emb)
         self.model.to(device)
         self.incident = incident
+        self.weather = weather
         self.optimizer = optim.Adam(self.model.parameters(), lr=lrate, weight_decay=wdecay)
         self.loss = util.masked_mae
         self.scaler = scaler
         self.clip = 5
 
-    def train(self, input, real_val, incident_x=None):
+    def train(self, input, real_val, incident_x=None, weather_x=None):
         self.model.train()
         self.optimizer.zero_grad()
-        #TODO Input concat with graph embedding and do fc projection
-        if self.incident == True:
+        if self.incident == True and self.weather == True:
             input = nn.functional.pad(input,(1,0,0,0))
             incident_x = nn.functional.pad(incident_x,(1,0,0,0))
-            output = self.model(input, incident_x)
+            weather_x = nn.functional.pad(weather_x,(1,0,0,0))
+            output = self.model(input, incident_x, weather_x)
+        elif self.incident == True:
+            input = nn.functional.pad(input,(1,0,0,0))
+            incident_x = nn.functional.pad(incident_x,(1,0,0,0))
+            output = self.model(input, incident_x, None)
+        elif self.weather == True:
+            input = nn.functional.pad(input,(1,0,0,0))
+            weather_x = nn.functional.pad(weather_x,(1,0,0,0))
+            output = self.model(input, None, weather_x)
         else:
             input = nn.functional.pad(input,(1,0,0,0))
             output = self.model(input, None)
@@ -38,12 +47,21 @@ class trainer():
         rmse = util.masked_rmse(predict,real,0.0).item()
         return loss.item(),mape,rmse
 
-    def eval(self, input, real_val, incident_x=None):
+    def eval(self, input, real_val, incident_x=None, weather_x=None):
         self.model.eval()
-        if self.incident == True:
+        if self.incident == True and self.weather == True:
             input = nn.functional.pad(input,(1,0,0,0))
             incident_x = nn.functional.pad(incident_x,(1,0,0,0))
-            output = self.model(input, incident_x)
+            weather_x = nn.functional.pad(weather_x,(1,0,0,0))
+            output = self.model(input, incident_x, weather_x)
+        elif self.incident == True:
+            input = nn.functional.pad(input,(1,0,0,0))
+            incident_x = nn.functional.pad(incident_x,(1,0,0,0))
+            output = self.model(input, incident_x, None)
+        elif self.weather == True:
+            input = nn.functional.pad(input,(1,0,0,0))
+            weather_x = nn.functional.pad(weather_x,(1,0,0,0))
+            output = self.model(input, None, weather_x)
         else:
             input = nn.functional.pad(input,(1,0,0,0))
             output = self.model(input, None)
